@@ -40,6 +40,8 @@ L.CanvasLayer.VectorFieldAnim = L.CanvasLayer.Field.extend({
     },
 
     onDrawLayer: function(viewInfo) {
+
+        // TODO 应该只执行一次，后面只修改数据
         if (!this._field || !this.isVisible()) return;
 
         this._updateOpacity();

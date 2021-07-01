@@ -12,7 +12,7 @@ L.CanvasLayer.VectorFieldAnim = L.CanvasLayer.Field.extend({
         velocityScale: 1 / 5000
     },
 
-    initialize: function(vectorField, options) {
+    initialize: function (vectorField, options) {
         L.CanvasLayer.Field.prototype.initialize.call(
             this,
             vectorField,
@@ -21,14 +21,18 @@ L.CanvasLayer.VectorFieldAnim = L.CanvasLayer.Field.extend({
         L.Util.setOptions(this, options);
 
         this.timer = null;
+        this.ctx = null;
+        this.paths = [];
+        this.viewInfo = null;
+        this.running = true;
     },
 
-    onLayerDidMount: function() {
+    onLayerDidMount: function () {
         L.CanvasLayer.Field.prototype.onLayerDidMount.call(this);
         this._map.on('move resize', this._stopAnimation, this);
     },
 
-    onLayerWillUnmount: function() {
+    onLayerWillUnmount: function () {
         L.CanvasLayer.Field.prototype.onLayerWillUnmount.call(this);
         this._map.off('move resize', this._stopAnimation, this);
         this._stopAnimation();
@@ -39,81 +43,97 @@ L.CanvasLayer.VectorFieldAnim = L.CanvasLayer.Field.extend({
         this._stopAnimation();
     },
 
-    onDrawLayer: function(viewInfo) {
+    onDrawLayer: function (viewInfo) {
 
-        // TODO 应该只执行一次，后面只修改数据
+        this.viewInfo = viewInfo;
+        this.running = true;
+
         if (!this._field || !this.isVisible()) return;
 
         this._updateOpacity();
-
-        let ctx = this._getDrawingContext();
-        let paths = this._prepareParticlePaths();
-
-        this.timer = d3.timer(function() {
-            _moveParticles();
-            _drawParticles();
-        }, this.options.duration);
-
-        let self = this;
-
-        /**
-         * Builds the paths, adding 'particles' on each animation step, considering
-         * their properties (age / position source > target)
-         */
-        function _moveParticles() {
-            // let screenFactor = 1 / self._map.getZoom(); // consider using a 'screenFactor' to ponderate velocityScale
-            paths.forEach(function(par) {
-                if (par.age > self.options.maxAge) {
-                    // restart, on a random x,y
-                    par.age = 0;
-                    self._field.randomPosition(par);
-                }
-
-                let vector = self._field.valueAt(par.x, par.y);
-                if (vector === null) {
-                    par.age = self.options.maxAge;
-                } else {
-                    // the next point will be...
-                    let xt = par.x + vector.u * self.options.velocityScale; //* screenFactor;
-                    let yt = par.y + vector.v * self.options.velocityScale; //* screenFactor;
-
-                    if (self._field.hasValueAt(xt, yt)) {
-                        par.xt = xt;
-                        par.yt = yt;
-                        par.m = vector.magnitude();
-                    } else {
-                        // not visible anymore...
-                        par.age = self.options.maxAge;
-                    }
-                }
-                par.age += 1;
-            });
+        if (!this.ctx) {
+            this.ctx = this._getDrawingContext();
         }
 
-        /**
-         * Draws the paths on each step
-         */
-        function _drawParticles() {
-            // Previous paths...
-            let prev = ctx.globalCompositeOperation;
-            ctx.globalCompositeOperation = 'destination-in';
-            ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-            //ctx.globalCompositeOperation = 'source-over';
-            ctx.globalCompositeOperation = prev;
+        // 清空画布痕迹
+        this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
 
-            // fading paths...
-            ctx.fillStyle = `rgba(0, 0, 0, ${self.options.fade})`;
-            ctx.lineWidth = self.options.width;
-            ctx.strokeStyle = self.options.color;
 
-            // New paths
-            paths.forEach(function(par) {
-                self._drawParticle(viewInfo, ctx, par);
-            });
+        // TODO 应该只执行一次，后面只修改数据
+
+        if (this.paths.length == 0) {
+            this.paths = this._prepareParticlePaths();
         }
+
+        if (!this.timer) {
+            this.timer = d3.timer(() => {
+                if (this.running) {
+                    this._moveParticles();
+                    this._drawParticles();
+                }
+            }, this.options.duration);
+        }
+
     },
 
-    _drawParticle(viewInfo, ctx, par) {
+
+    /**
+     * Builds the paths, adding 'particles' on each animation step, considering
+     * their properties (age / position source > target)
+     */
+    _moveParticles: function () {
+        // let screenFactor = 1 / self._map.getZoom(); // consider using a 'screenFactor' to ponderate velocityScale
+        this.paths.forEach((par) => {
+            if (par.age > this.options.maxAge) {
+                // restart, on a random x,y
+                par.age = 0;
+                this._field.randomPosition(par);
+            }
+
+            let vector = this._field.valueAt(par.x, par.y);
+            if (vector === null) {
+                par.age = this.options.maxAge;
+            } else {
+                // the next point will be...
+                let xt = par.x + vector.u * this.options.velocityScale; //* screenFactor;
+                let yt = par.y + vector.v * this.options.velocityScale; //* screenFactor;
+
+                if (this._field.hasValueAt(xt, yt)) {
+                    par.xt = xt;
+                    par.yt = yt;
+                    par.m = vector.magnitude();
+                } else {
+                    // not visible anymore...
+                    par.age = this.options.maxAge;
+                }
+            }
+            par.age += 1;
+        });
+    },
+
+    /**
+     * Draws the paths on each step
+     */
+    _drawParticles: function () {
+        // Previous paths...
+        let prev = this.ctx.globalCompositeOperation;
+        this.ctx.globalCompositeOperation = 'destination-in';
+        this.ctx.fillRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
+        //this.ctx.globalCompositeOperation = 'source-over';
+        this.ctx.globalCompositeOperation = prev;
+
+        // fading paths...
+        this.ctx.fillStyle = `rgba(0, 0, 0, ${this.options.fade})`;
+        this.ctx.lineWidth = this.options.width;
+        this.ctx.strokeStyle = this.options.color;
+
+        // New paths
+        this.paths.forEach((par) => {
+            this._drawParticle(this.viewInfo, this.ctx, par);
+        });
+    },
+
+    _drawParticle: function (viewInfo, ctx, par) {
         let source = new L.latLng(par.y, par.x);
         let target = new L.latLng(par.yt, par.xt);
 
@@ -147,7 +167,7 @@ L.CanvasLayer.VectorFieldAnim = L.CanvasLayer.Field.extend({
         }
     },
 
-    _prepareParticlePaths: function() {
+    _prepareParticlePaths: function () {
         let paths = [];
 
         for (var i = 0; i < this.options.paths; i++) {
@@ -158,17 +178,19 @@ L.CanvasLayer.VectorFieldAnim = L.CanvasLayer.Field.extend({
         return paths;
     },
 
-    _randomAge: function() {
+    _randomAge: function () {
         return Math.floor(Math.random() * this.options.maxAge);
     },
 
-    _stopAnimation: function() {
-        if (this.timer) {
-            this.timer.stop();
-        }
+    _stopAnimation: function () {
+        this.running = false;
+        // if (this.timer) {
+        //     this.timer.stop();
+        //     this.timer = null;
+        // }
     }
 });
 
-L.canvasLayer.vectorFieldAnim = function(vectorField, options) {
+L.canvasLayer.vectorFieldAnim = function (vectorField, options) {
     return new L.CanvasLayer.VectorFieldAnim(vectorField, options);
 };
